@@ -15,5 +15,8 @@
   "repository": {
     "type": "git",
     "url": "http://github.com/sciolizer/zendo-js.git"
+  },
+  "dependencies": {
+    "prelude-ls": "^1.1.1"
   }
 }

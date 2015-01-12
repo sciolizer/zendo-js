@@ -1,13 +1,37 @@
-/*
-function someParser(strings) {
-  return (newStrings, function(stack) { return newStack; })
-}
-*/
+
+# todo: figure out how to import the prelude
+map = (f, list) ->
+  result = []
+  for item in list
+    result.push(f(item))
+  result
+
+single = (f) -> (item) -> [f(item)]
+
+optionally-plural = (word) ->
+  plural = if word == \six then \sixes else word + \s
+  article = if word == \ace then \an else \a
+  deconstruct-word = (thing) -> if thing and thing[word] then [] else void
+  [pure(-> { "#word": {} }, deconstruct-word), plural `o` [article, word]]
 
 o = (left, right) ->
   parse: (strings) ->*
     yield from run-parser(left, strings)
     yield from run-parser(right, strings)
+  debug: ->
+    "o(" + run-debug(left) + "," + run-debug(right) + ")"
+  print: (stack) ->*
+    yield from run-print(left, stack)
+    yield from run-print(right, stack)
+
+# todo: figure out how to import the prelude
+fold1 = (f, list) ->
+  result = list[0]
+  for next in list.slice(1)
+    result := f result, next
+  result
+
+any = (choices) -> fold1 o, choices
 
 opt = (parser) -> nop `o` parser
 
@@ -16,6 +40,12 @@ nop =
     yield do
       strings: strings
       stackModifier: (stack) -> stack
+  debug: ->
+    "nop"
+  print: (stack) ->*
+    yield do
+      strings: []
+      stack: stack
 
 # Input:
 #   parser: a boomerang
@@ -42,6 +72,31 @@ run-parser = (parser, strings) ->*
   case Object
     yield from parser.parse(strings)
   default ...
+
+run-print = (parser, stack) ->*
+  switch parser.constructor
+  case String
+    yield do
+      strings: [parser]
+      stack: stack
+  case Array
+    yield from run-array-print parser, stack
+  case Object
+    yield from parser.print stack
+  default ...
+
+run-debug = (parser) ->
+  if void == parser
+    return "void"
+  switch parser.constructor
+  case String
+    parser
+  case Array
+    map run-debug, parser
+  case Object
+    parser.debug()
+  default
+    "unknown"
 
 # Input:
 #   array: an array of boomerangs
@@ -71,25 +126,56 @@ run-array-parser = (array, strings) ->*
           tail-item := tail-iterator.next()
       head-item := head-iterator.next()
 
+run-array-print = (array, stack) ->*
+  if array.length == 0
+    yield do
+      strings: []
+      stack: stack
+  else
+    head-iterator = run-print array[0], stack
+    head-item = head-iterator.next()
+    while not head-item.done
+      tail-iterator = run-array-print array.slice(1), head-item.value.stack
+      tail-item = tail-iterator.next()
+      while not tail-item.done
+        yield do
+          strings: head-item.value.strings ++ tail-item.value.strings
+          stack: tail-item.value.stack
+        tail-item := tail-iterator.next()
+      head-item := head-iterator.next()
+
 # Input:
 #   reducer: any function with a fixed number of arguments
+#   expander: function of one argument that returns a list of stack items, or returns void.
+#     Generaly the size of the list will match the number of arguments on reducer
 # Output:
 #   a boomerang which consumes no input and applies the function to the current stack
-pure = (reducer) ->
+pure = (reducer, expander) ->
   parse: (strings) ->*
     yield do
       strings: strings
       stackModifier: (stack) ->
         if stack.length < reducer.length
+          #console.log "depleted stack", stack
+          #console.log "reducer", reducer
           throw Error 'grammar bug: stack depleted'
         args = stack.slice 0, reducer.length
         [reducer.apply @, args] ++ stack.slice reducer.length
+  debug: ->
+    "pure"
+  print: (stack) ->*
+    if stack.length > 0
+      prefix = expander(stack[0])
+      if prefix != void
+        yield do
+          strings: []
+          stack: prefix ++ stack.slice(1)
 
 # Input:
 #   mini-parser: a function which takes a string and returns a value.
 #     Returning undefined indicates the parse failed.
 #   expected: the string to display to the user on parse failure, e.g. "<number>"
-mini-parse = (mini-parser, expected) ->
+mini-parse = (mini-parser, expected, to-string) ->
   parse: (strings) ->*
     if strings.length > 0
       val = mini-parser strings[0]
@@ -107,227 +193,235 @@ mini-parse = (mini-parser, expected) ->
         strings: strings
         error: true
         expected: expected
+  debug: ->
+    "mini-parse(" + expected + ")"
+  print: (stack) ->*
+    yield do
+      strings: if to-string == void then "" + stack[0] else to-string(stack[0])
+      stack: stack.slice(1)
 
-all = [each-and-every, 'number', 'is'] `o` <[all numbers are]>
-none = <[none of the numbers are]> `o` <[no number is]>
-at-least-one = [opt(['at', 'least']), 'one', <[of the numbers]> `o` 'number', 'is'] `o` ['a' `o` 'any', 'number', 'is']
-sum = ['the', 'sum' `o` 'total', opt(<[of the numbers]>), 'is']
-smallest = ['the', ('smallest' `o` 'minimum') `o` 'least', opt('number'), 'is']
-largest = ['the', ('largest' `o` 'biggest') `o` 'maximum', opt('number'), 'is']
-first = ['the', 'first', opt('number'), 'is']
-last = ['the', 'last', opt('number'), 'is']
-each-and-every = ['each', opt(<[and every]>)] `o` 'every'
-of-numbers = <[of numbers]>
+on-rule-input-change = ->
+  rule-input = $ '#rule-input'
+  next-words-list = $ '#next-words-list'
+  line = rule-input.val()
+  strings = line.trim().split(/\s+/)
+  if line.slice(-1) != " "
+    last-word = strings.slice(-1)[0]
+    strings = strings.slice(0, -1)
+  else
+    last-word = ""
+  if strings.length == 0 && strings[0] == ""
+    strings = []
+  top-rule = rule-g
+  iterator = run-parser top-rule, strings
+  words = []
+  item = iterator.next()
+  stacks = []
+  while not item.done
+    if item.value.error && item.value.strings.length == 0
+      expected = item.value.expected
+      if expected.indexOf(last-word) == 0 && words.indexOf(expected) == -1
+        words.push expected
+    else if not item.value.error
+      new-stack = item.value.stack-modifier([])
+      stacks.push(new-stack)
+      if words.indexOf("&lt;enter&gt;") == -1
+        words.push "&lt;enter&gt;"
+    item := iterator.next()
+  other-sentences = []
+  for stack in stacks
+    iterator = run-print top-rule, stack
+    item = iterator.next()
+    while not item.done
+      sentence = item.value.strings.join " "
+      if other-sentences.indexOf(sentence) == -1
+        other-sentences.push(sentence)
+      item := iterator.next()
+  words.sort()
+  html = ""
+  for word in words
+    html := html + " #word" #<li class='list-group-item'>#word</li>"
+  next-words-list.html(html)
+  interpretations-html = ""
+  other-sentences.sort()
+  for sentence in other-sentences
+    interpretations-html := interpretations-html + "<li class='list-group-item'>#sentence</li>"
+  $('#other-interpretations').html(interpretations-html)
+
+rule =
+  and: { left: \rule, right: \rule }
+  atLeastOne: { property: \property }
+  all: { property: \property }
+
+#none = <[none of the numbers are]> `o` <[no number is]>
+#sum = ['the', 'sum' `o` 'total', opt(<[of the numbers]>), 'is']
+#smallest = ['the', ('smallest' `o` 'minimum') `o` 'least', opt('number'), 'is']
+#largest = ['the', ('largest' `o` 'biggest') `o` 'maximum', opt('number'), 'is']
+#first = ['the', 'first', opt('number'), 'is']
+#last = ['the', 'last', opt('number'), 'is']
+#of-numbers = <[of numbers]>
+
+property =
+  isColor: { color: \color }
+  hasSuit: { suit: \suit }
+  isRank: { rank: \rank }
+  isFace: {}
+
+rank-g = any(map optionally-plural, <[ace two three four five seven eight nine ten jack queen king]>)
+
+suit-g = any(map optionally-plural, <[heart club diamond spade]>)
+
+deconstruct-red = (color) -> if color and color.red then [] else void
+
+deconstruct-black = (color) -> if color and color.black then [] else void
+
+red-constructor = ->
+  { red: {} }
+
+black-constructor = ->
+  { black: {} }
+
+color-g = [pure(-> { red: {} }, deconstruct-red), \red] `o` [pure(-> { black: {} }, deconstruct-black), \black]
+
+deconstruct-color = (property) ->
+  if property && property.isColor && property.isColor.color
+    [property.isColor.color]
+
+color-constructor = (color) ->
+  { isColor: { color } }
+
+property-g = any do
+  * [pure(color-constructor, deconstruct-color), color-g]
+    [pure((suit) -> { hasSuit: { suit } }, single((?.hasSuit?.suit))), suit-g]
+    [pure((rank) -> { isRank: { rank } }, single((?.isRank?.rank))), rank-g]
+
 /*
+color =
+  red: {}
+  black: {}
+*/
 
-allPairs = eachAndEvery . word "pair" . opt ofNumbers . limited Pair
-  <> word "all" . word "pairs" . opt ofNumbers . limited Pairs
-atLeastOnePair =
-     word "any" . word "pair" . opt ofNumbers . limited Pair
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE OverloadedStrings #-}
-module English where
+/*
+suit =
+  hearts: {}
+  clubs: {}
+  diamonds: {}
+  spades: {}
+*/
 
-import Prelude hiding ((.), id, all, sum, last)
-import Control.Category ((.), id)
-import Control.Monad (forever)
-import Data.String
-import Text.Boomerang
-import Text.Boomerang.Strings hiding (digit)
-import Text.Boomerang.TH
-import System.IO (hFlush, stdout)
 
-import Zendo
+/*
+rank =
+  ace: {}
+  two: {}
+  three: {}
+  four: {}
+  five: {}
+  six: {}
+  seven: {}
+  eight: {}
+  nine: {}
+  ten: {}
+  jack: {}
+  queen: {}
+  king: {}
+*/
 
-$(derivePrinterParsers ''Digit)
-$(derivePrinterParsers ''Parity)
-$(derivePrinterParsers ''DigitAttribute)
-$(derivePrinterParsers ''DigitFactor)
-$(derivePrinterParsers ''Flip)
-$(derivePrinterParsers ''GroupAttribute)
-$(derivePrinterParsers ''LimitedComparison)
-$(derivePrinterParsers ''GroupFactor)
+deconstruct-all = (rule) -> if rule and rule.all and rule.all.property then [rule.all.property] else void
 
-word x = x . eos
+all-construct = (property) ->
+  { all: { property } }
+each-and-every-g = ['each', opt(<[and every]>)] `o` 'every'
+all-g = [pure(all-construct, deconstruct-all), [each-and-every-g, 'card', 'is'] `o` <[all cards are]>, property-g]
+at-least-one-g = [pure((property) -> { atLeastOne: { property } }, single((?.atLeastOne?.property))), [opt(['at', 'least']), 'one', <[of the cards]> `o` 'card', 'is'] `o` ['a' `o` 'any', 'card', 'is'], property-g]
 
-line = digitAttribute . word "X"
+and-deconstructor = (rule) ->
+  left = rule?.and?.left
+  right = rule?.and?.right
+  if left != void && right != void
+    [left, right]
 
-digitFactor = rDigitFactor . (rIs <> rIsNot . word "not") . digitAttribute
+recurse = (boomerang-supplier) ->
+  parse: (strings) ->*
+    yield from run-parser(boomerang-supplier(), strings)
+  debug: ->
+    "recurse"
+  print: (stack) ->*
+    yield from run-print(boomerang-supplier(), stack)
 
--- A sequence has the buddha nature if
-{- no pairs are equal
- - all numbers are different
- - all pairs (of numbers) are different/unequal
- - no pair of numbers differs by 5
- - 
- - different/unequal
- - equal/the same
- - pairs / pair of numbers / 
- - increasing
- - decreasing
- - ordered from smallest to largest
- - ordered from largest to smallest
- - consecutive pairs
- -}
 
-groupFactor = rGroupFactor . (rIs <> rIsNot . notTheCase) . groupAttribute where
-  notTheCase = word "it" . word "is" . word "not" . word "the" . word "case" . word "that"
+quantifier-g = any [all-g, at-least-one-g]
 
-groupAttribute =
-     rAll . all . digitFactor
-  <> rAtLeastOne . atLeastOne . digitFactor
-  <> rNone . none . digitFactor -- todo: suppors "fives" and "5s"
-  <> rSum . sum . parity
-  <> rSmallest . smallest . digitFactor
-  <> rLargest . largest . digitFactor
-  <> rFirst . first . digitFactor
-  <> rLast . last . digitFactor
-  <> rNoPairs . noPairs
-  <> rAtLeastOnePair . atLeastOnePair
-  <> rAllPairs . allPairs
+and-g = [pure((left, right) -> { and: { left, right } }, and-deconstructor), quantifier-g, \and, recurse(-> rule-g)]
 
-all = eachAndEvery . word "number" . word "is"
-    <> word "all" . word "numbers" . word "are"
-none = word "none" . word "of" . word "the" . word "numbers" . word "are"
-    <> word "no" . word "number" . word "is"
-atLeastOne = opt (word "at" . word "least") . word "one" . (word "of" . word "the" . word "numbers" <> word "number") . "is"
-  <> (word "a" <> word "any") . word "number" . word "is"
-sum = word "the" . (word "sum" <> word "total") . opt (word "of" . word "the" . word "numbers") . word "is"
-smallest = word "the" . (word "smallest" <> word "minimum" <> word "least") . opt (word "number") . word "is"
-largest = word "the" . (word "largest" <> word "biggest" <> word "maximum") . opt (word "number") . word "is"
-first = word "the" . word "first" . opt (word "number") . word "is"
-last = word "the" . word "last" . opt (word "number") . word "is"
+rule-g = any [quantifier-g, and-g]
 
-eachAndEvery = word "each" . opt (word "and" . word "every") <> word "every"
+/*
+rule-dictionary = { rule, property, color, suit, rank }
 
-ofNumbers = word "of" . word "numbers"
+data Rule
+  = And Rule Rule
+  | Or Rule Rule
+  | Not Rule
+  | AtLeastOne Prop
+  | AtMostOne Prop
+  | None Prop
+  | All Prop
+  | Exactly Int Prop
+  -- | Particular Which Prop -- not sure if this is necessary, but it makes the wording interesting
+  | NumericalRelationship NumericalRelationship
 
-allPairs = eachAndEvery . word "pair" . opt ofNumbers . limited Pair
-  <> word "all" . word "pairs" . opt ofNumbers . limited Pairs
-atLeastOnePair =
-     word "any" . word "pair" . opt ofNumbers . limited Pair
-  <> word "at" . word "least" . (word "one" <> word "a") . word "pair" . opt ofNumbers . limited Pair
-  <> opt (word "at" . word "least") . word "two" . word "numbers" . limited Numbers
-noPairs =
-     word "no" . word "pair" . ofNumbers . limited Pair
-  <> word "no" . word "two" . word "numbers" . limited Numbers
+data NumericalRelationship
+  = Equals [Quantity] -- two or more
+  | AllUnequal [Quantity] -- two or more
+  | LT Quantity Quantity
+  | LTE Quantity Quantity
+  | GT Quantity Quantity
+  | GTE Quantity Quantity
 
-data ToEachOther = Numbers | Pair | Pairs
-  deriving (Bounded, Enum, Eq, Ord, Read, Show)
+data Quantity
+  = RawNumber Int
+  | Sum Prop
+  | Count Prop -- CountTrue just counts all of the cards
+  | RankOf PositionProp
+  | PositionOf SpecificCard
 
--- no two numbers are equal to each other
--- no pairs of numbers are equal
--- pairEqual = word "equal" <> word "the" . word "same"
--- the same as each other
--- equal to each other
--- pair is unequal
-limited Pair =
-     rEqual . word "is" . word "equal"
-  -- <> rUnequal . word "is" . word "unequal"
-  -- <> rAbsoluteDifferenceOf . word "differs" . word "by" . opt (word "exactly") . thenumber [1..9]
-  <> rAbsoluteDifferenceOf . word "has" . word "a" . word "difference" . word "of" . thenumber [1..9]
-limited Pairs =
-     rEqual . word "are" . word "equal"
-  -- <> rUnequal . word "are" . word "unequal"
-  <> rAbsoluteDifferenceOf . word "have" . word "a" . word "difference" . word "of" . thenumber [1..9]
-limited Numbers =
-     rEqual . word "are" . (word "equal" . opt toEachOther <> word "the" . word "same" . opt asEachOther)
-  <> rUnequal . word "are" . (word "unequal" . rNothing . opt toEachOther <> word "different" . rMaybe fromEachOther)
-  -- <> rUnequal . word "differ"
-  <> rAbsoluteDifferenceOf . word "differ" . word "by" . opt (word "exactly") . thenumber [1..9]
-  <> rAbsoluteDifferenceOf . word "have" . word "a" . word "difference" . word "of" . opt (word "exactly") . thenumber [1..9] where
-  toEachOther = word "to" . word "each" . word "other"
-  fromEachOther = rUnit . word "from" . word "each" . word "other"
-  asEachOther = word "as" . word "each" . word "other"
+data Prop
+  = Color Color
+  | Suit Suit
+  | Rank Rank -- might want to also make a suit+rank combo constructor, as that might actually be pretty easy
+  | Face
+  | And Prop Prop
+  | Or Prop Prop
+  | Not Prop
+  | Implies Prop Prop
+  | Xor Prop Prop
+  | True
+  | False
+  | LT Rank
+  | LTE Rank
+  | GT Rank
+  | GTE Rank
+  | UniqueProp UniqueProp
 
-digitAttribute =
-     rTheDigit . thedigits [0..9]
-  <> rDLessThan . less . word "than" . thedigits [1..9]
-  <> rDGreaterThan . more . word "than" . thedigits [0..8]
-  <> rParity . parity
-  <> rDLessThanOrEqual . less . word "than" . word "or" . eq . thedigits [0..8]
-  <> rDGreaterThanOrEqual . more . word "than" . word "or" . eq . thedigits [1..9]
+data PositionProp =
+  = First -- need to do some finagling to make sure that unique props are worded differently than non-unique props
+  | Last
+  | Position Int
 
-eq = word "equal" . word "to" <> word "the" . word "same" . word "as"
-less = word "less" <> word "smaller" <> word "lower"
-more = word "more" <> word "bigger" <> word "larger" <> word "greater" <> word "higher"
+data SpecificCard = SpecificCard Rank Suit
 
-parity = rEven . word "even" <> rOdd . word "odd"
+data Color
+  = Red
+  | Black
 
-thenumber ds = opt (word "the" . word "number") . foldl1 (<>) (map number ds)
+data Suit
+  = Heart
+  | Club
+  | Suit
+  | Spade
+*/
 
-number i = [zero, one, two, three, four, five, six, seven, eight, nine] !! i where
-  zero = undefined
-  one = undefined
-  two = undefined
-  three = undefined
-  four = undefined
-  five = undefined
-  six = undefined
-  seven = undefined
-  eight = undefined
-  nine = undefined
-
-thedigits ds = opt (word "the" . word "number") . digits ds
-
-digits ds = foldl1 (<>) [digit i . word (fromString $ show i) | i <- ds]
-
-digit i = [rD0, rD1, rD2, rD3, rD4, rD5, rD6, rD7, rD8, rD9] !! i
-
-{-
-data Foo
-  = Bar
-  | Baz Int Char
-  deriving (Eq, Ord, Read, Show)
-
-data Att = Att Bool Digit
-  deriving (Eq, Ord, Read, Show)
-
-data Digit = D0 | D1
-  deriving (Bounded, Enum, Eq, Ord, Read, Show)
-
-$(derivePrinterParsers ''Foo)
-$(derivePrinterParsers ''Att)
-$(derivePrinterParsers ''Digit)
-
-rDigit = rD0 . "0" <> rD1 . "1"
-
-type StringsPrinterParser = PrinterParser StringsError [String]
-
-at :: StringsPrinterParser () (Att :- ())
-at = rAtt . "is" . eos . (rFalse . "not" . eos <> rTrue) . rDigit
--}
-{-
-foo :: StringPrinterParser () (Foo :- ())
-foo = rBar . "bar" <> rBaz . "baz-" . int . "-" . alpha
-
-test1 = parseString foo "baz-2-c"
-
-test2 = parseString foo ""
-
-test3 = parseString foo "baz-2-3"
-
-test4 = unparseString foo (Baz 1 'z')
-
-testInvert :: String -> IO ()
-testInvert str =
-  case parseString foo str of
-    (Left e) -> print e
-    (Right f') -> do
-      putStrLn $ "Parsed: " ++ show f'
-      case unparseString foo f' of
-        Nothing -> putStrLn "unparseString failed to produce a value."
-        (Just s) -> putStrLn $ "Pretty: " ++ s
-
-main = forever $ do
-  putStr "Enter a string to parse: "
-  hFlush stdout
-  l <- getLine
-  testInvert l
-  -}
--- main = print "hi"
-     */
 module.exports =
   something: 5
   runParser: run-parser
@@ -335,3 +429,16 @@ module.exports =
   o: o
   miniParse: mini-parse
   nop: nop
+  onRuleInputChange: on-rule-input-change
+  ruleG: rule-g
+  fold1: fold1
+  optionallyPlural: optionally-plural
+  map: map
+  rankG: rank-g
+  runDebug: run-debug
+  runPrint: run-print
+  colorG: color-g
+  propertyG: property-g
+  colorConstructor: color-constructor
+  deconstructColor: deconstruct-color
+  any: any
