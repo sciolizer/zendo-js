@@ -70,7 +70,7 @@ describe \example-rule -> ``it``
       item := iterator.next()
     assert.equal value.strings.length, 0
     stack = value.stack-modifier []
-    assert.deepEqual stack, [{atLeastOne:{property:{isColor:{color:black:{}}}}}]
+    assert.deepEqual stack, [{atLeastOne:{property:{isColor:{color:{black:{}}}}}}]
 
 class Parse-tester
   (@iterator) ->

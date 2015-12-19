@@ -13,7 +13,6 @@ evaluate-top = (rule, cards) ->
     evaluator = (card) -> evaluate-property(rule.atLeastOne.property, card)
     any(evaluator, cards)
   else
-    console.log \rule, rule
     throw new Error("Don't know how to process rule.")
 
 evaluate-property = (property, card) ->
@@ -25,10 +24,10 @@ evaluate-property = (property, card) ->
     result = evaluate-color(property.is-color.color, card)
     result
   else
-    console.log \property, property
     throw new Error("Don't understand that property.")
 
-evaluate-suit = (suit, card) -> throw new Error("Suit not implemented")
+evaluate-suit = (suit, card) ->
+  throw new Error("Suit not implemented")
 
 evaluate-rank = (rank, card) -> throw new Error("Rank not implemented")
 
@@ -39,7 +38,6 @@ evaluate-color = (color, card) ->
   else if color.black != void
     suit == 'C' || suit == 'S'
   else
-    console.log \color, color
     throw new Error("Don't understand color.")
 
 module.exports = {

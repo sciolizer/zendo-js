@@ -10,6 +10,8 @@
 # Unit tests can pass in a fixed random generator for
 # consistency, but they will probably be fragile anyway.
 random-rule = (complexity, rand) ->
+  if rand == void
+    rand = { next: (cap) -> Math.floor(Math.random() * cap) }
   if complexity > 0 && rand.next(2) == 0
     { and: { left: random-rule(complexity - 1, rand), right: random-rule(complexity - 1, rand) } }
   else if rand.next(2) == 0
@@ -33,10 +35,48 @@ random-color = (complexity, rand) ->
     { black: {} }
 
 random-suit = (complexity, rand) ->
-  throw new Error("random-suit not implemented")
+  suit = rand.next(4)
+  if suit == 0
+    { club: {} }
+  else if suit == 1
+    { diamond: {} }
+  else if suit == 2
+    { heart: {} }
+  else if suit == 3
+    { spade: {} }
+  else
+    throw new Error("Rand not in range: " + suit)
 
 random-rank = (complexity, rand) ->
-  throw new Error("random-rank not implemented")
+  rank = rand.next(13) + 1
+  if rank == 1
+    { ace: {} }
+  else if rank == 2
+    { two: {} }
+  else if rank == 3
+    { three: {} }
+  else if rank == 4
+    { four: {} }
+  else if rank == 5
+    { five: {} }
+  else if rank == 6
+    { six: {} }
+  else if rank == 7
+    { seven: {} }
+  else if rank == 8
+    { eight: {} }
+  else if rank == 9
+    { nine: {} }
+  else if rank == 10
+    { ten: {} }
+  else if rank == 11
+    { jack: {} }
+  else if rank == 12
+    { queen: {} }
+  else if rank == 13
+    { king: {} }
+  else
+    throw new Error("rank out of range: " + rank)
 
 module.exports = {
   randomRule: random-rule
